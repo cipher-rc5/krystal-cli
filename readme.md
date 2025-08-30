@@ -1,3 +1,4 @@
+
 # Krystal Cloud API Client
 
 High-performance Rust client library and CLI tool for interacting with the Krystal Cloud API. Query DeFi pools, positions, and transaction data across multiple blockchain networks with type-safe async interfaces.
