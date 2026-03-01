@@ -2,16 +2,18 @@
 // description:
 // docs_reference:
 
-use clap::{Parser, Subcommand};
+use crate::KrystalApiClient;
 use crate::cli::commands;
 use crate::error::Result;
-use crate::KrystalApiClient;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "krystal-cli")]
 #[command(about = "Command line tool for interacting with the Krystal Cloud API")]
 #[command(version = "0.1.0")]
-#[command(long_about = "comprehensive commandline tool for querying DeFi pools, positions, transactions, and blockchain data through the Krystal Cloud API")]
+#[command(
+    long_about = "comprehensive commandline tool for querying DeFi pools, positions, transactions, and blockchain data through the Krystal Cloud API"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,

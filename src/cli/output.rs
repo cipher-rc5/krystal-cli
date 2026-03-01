@@ -91,11 +91,18 @@ pub fn print_pools_table(pools: &[Pool], detailed: bool, compact: bool) -> Resul
 
     if compact {
         for pool in pools {
-            let token_pair = get_token_pair_display(&pool);
-            let protocol_name = pool.protocol.as_ref()
+            let token_pair = get_token_pair_display(pool);
+            let protocol_name = pool
+                .protocol
+                .as_ref()
                 .map(|p| p.name.as_str())
                 .unwrap_or("Unknown");
-            println!("{} ({}) - TVL: {}", token_pair, protocol_name, finance::format_usd(pool.tvl));
+            println!(
+                "{} ({}) - TVL: {}",
+                token_pair,
+                protocol_name,
+                finance::format_usd(pool.tvl)
+            );
         }
     } else if detailed {
         for (i, pool) in pools.iter().enumerate() {
@@ -114,12 +121,23 @@ pub fn print_pools_table(pools: &[Pool], detailed: bool, compact: bool) -> Resul
 /// Print pools in CSV format
 pub fn print_pools_csv(pools: &[Pool], detailed: bool) -> Result<()> {
     if detailed {
-        println!("index,chain_id,chain_name,pool_address,protocol,token0_symbol,token1_symbol,fee_tier,tvl,pool_price,volume_24h,apr_24h");
+        println!(
+            "index,chain_id,chain_name,pool_address,protocol,token0_symbol,token1_symbol,fee_tier,tvl,pool_price,volume_24h,apr_24h"
+        );
         for (i, pool) in pools.iter().enumerate() {
             let chain_info = pool.chain.as_ref();
-            let token0_symbol = pool.token0.as_ref().map_or("?".to_string(), |t| t.symbol.clone());
-            let token1_symbol = pool.token1.as_ref().map_or("?".to_string(), |t| t.symbol.clone());
-            let protocol_name = pool.protocol.as_ref().map_or("Unknown".to_string(), |p| p.name.clone());
+            let token0_symbol = pool
+                .token0
+                .as_ref()
+                .map_or("?".to_string(), |t| t.symbol.clone());
+            let token1_symbol = pool
+                .token1
+                .as_ref()
+                .map_or("?".to_string(), |t| t.symbol.clone());
+            let protocol_name = pool
+                .protocol
+                .as_ref()
+                .map_or("Unknown".to_string(), |p| p.name.clone());
             let volume_24h = pool.stats24h.as_ref().map(|s| s.volume).unwrap_or(0.0);
             let apr_24h = pool.stats24h.as_ref().map(|s| s.apr).unwrap_or(0.0);
 
@@ -142,8 +160,11 @@ pub fn print_pools_csv(pools: &[Pool], detailed: bool) -> Result<()> {
     } else {
         println!("index,token_pair,protocol,tvl,volume_24h,apr_24h");
         for (i, pool) in pools.iter().enumerate() {
-            let token_pair = get_token_pair_display(&pool);
-            let protocol_name = pool.protocol.as_ref().map_or("Unknown".to_string(), |p| p.name.clone());
+            let token_pair = get_token_pair_display(pool);
+            let protocol_name = pool
+                .protocol
+                .as_ref()
+                .map_or("Unknown".to_string(), |p| p.name.clone());
             let volume_24h = pool.stats24h.as_ref().map(|s| s.volume).unwrap_or(0.0);
             let apr_24h = pool.stats24h.as_ref().map(|s| s.apr).unwrap_or(0.0);
 
@@ -183,10 +204,16 @@ pub fn print_pool_detail(pool: &Pool) -> Result<()> {
     println!("Pool Price: {:.8}", pool.pool_price);
 
     if let Some(token0) = &pool.token0 {
-        println!("Token0: {} ({}) - {}", token0.symbol, token0.name, token0.address);
+        println!(
+            "Token0: {} ({}) - {}",
+            token0.symbol, token0.name, token0.address
+        );
     }
     if let Some(token1) = &pool.token1 {
-        println!("Token1: {} ({}) - {}", token1.symbol, token1.name, token1.address);
+        println!(
+            "Token1: {} ({}) - {}",
+            token1.symbol, token1.name, token1.address
+        );
     }
 
     // Statistics
@@ -219,16 +246,25 @@ pub fn print_pool_detail(pool: &Pool) -> Result<()> {
     }
 
     // Incentives
-    if let Some(incentives) = &pool.incentives {
-        if !incentives.is_empty() {
-            println!("\nIncentives:");
-            for incentive in incentives {
-                println!("  Type: {}", incentive.incentive_type);
-                println!("  Token: {} ({})", incentive.token.symbol, incentive.token.name);
-                println!("  Daily Reward: {}", finance::format_usd(incentive.daily_reward_usd));
-                println!("  24h APR: {}", finance::format_percentage(incentive.apr24h));
-                println!();
-            }
+    if let Some(incentives) = &pool.incentives
+        && !incentives.is_empty()
+    {
+        println!("\nIncentives:");
+        for incentive in incentives {
+            println!("  Type: {}", incentive.incentive_type);
+            println!(
+                "  Token: {} ({})",
+                incentive.token.symbol, incentive.token.name
+            );
+            println!(
+                "  Daily Reward: {}",
+                finance::format_usd(incentive.daily_reward_usd)
+            );
+            println!(
+                "  24h APR: {}",
+                finance::format_percentage(incentive.apr24h)
+            );
+            println!();
         }
     }
 
@@ -246,7 +282,8 @@ pub fn print_positions_table(positions: &[Position], detailed: bool, compact: bo
 
     if compact {
         for position in positions {
-            println!("{} - Status: {}, Value: {}",
+            println!(
+                "{} - Status: {}, Value: {}",
                 position.id,
                 position.status,
                 finance::format_usd(position.current_position_value)
@@ -257,15 +294,21 @@ pub fn print_positions_table(positions: &[Position], detailed: bool, compact: bo
             print_position_summary(i + 1, pos)?;
         }
     } else {
-        println!("{:<4} {:<20} {:<10} {:<12} {:<10} {:<8}",
-            "#", "Position ID", "Status", "Value", "Chain", "Protocol");
+        println!(
+            "{:<4} {:<20} {:<10} {:<12} {:<10} {:<8}",
+            "#", "Position ID", "Status", "Value", "Chain", "Protocol"
+        );
         println!("{}", "-".repeat(70));
 
         for (i, pos) in positions.iter().enumerate() {
-            let chain_name = pos.chain.as_ref()
+            let chain_name = pos
+                .chain
+                .as_ref()
                 .map(|c| c.name.as_str())
                 .unwrap_or("Unknown");
-            let protocol_name = pos.pool.as_ref()
+            let protocol_name = pos
+                .pool
+                .as_ref()
                 .and_then(|p| p.protocol.as_ref())
                 .map(|pr| pr.name.as_str())
                 .unwrap_or("Unknown");
@@ -288,15 +331,19 @@ pub fn print_positions_table(positions: &[Position], detailed: bool, compact: bo
 /// Print positions in CSV format
 pub fn print_positions_csv(positions: &[Position], detailed: bool) -> Result<()> {
     if detailed {
-        println!("index,position_id,chain_id,chain_name,status,current_value,min_price,max_price,liquidity");
+        println!(
+            "index,position_id,chain_id,chain_name,status,current_value,min_price,max_price,liquidity"
+        );
         for (i, pos) in positions.iter().enumerate() {
             let chain_info = pos.chain.as_ref();
+            let chain_name = chain_info.map(|c| c.name.as_str()).unwrap_or("Unknown");
+
             println!(
                 "{},{},{},{},{},{},{},{},{}",
                 i + 1,
                 escape_csv(&pos.id),
                 chain_info.map(|c| c.id).unwrap_or(0),
-                escape_csv(&chain_info.map(|c| &c.name).unwrap_or(&"Unknown".to_string())),
+                escape_csv(chain_name),
                 escape_csv(&pos.status),
                 pos.current_position_value,
                 pos.min_price,
@@ -322,13 +369,22 @@ pub fn print_positions_csv(positions: &[Position], detailed: bool) -> Result<()>
 /// Print detailed position information
 pub fn print_position_detail(position: &Position) -> Result<()> {
     println!("\nPosition: {}", position.id);
-    println!("Owner: {}", address::format_address_default(&position.owner_address));
+    println!(
+        "Owner: {}",
+        address::format_address_default(&position.owner_address)
+    );
     println!("Token Address: {}", position.token_address);
     println!("Token ID: {}", position.token_id);
     println!("Status: {}", position.status);
     println!("Liquidity: {}", position.liquidity);
-    println!("Price Range: {:.6} - {:.6}", position.min_price, position.max_price);
-    println!("Current Value: {}", finance::format_usd(position.current_position_value));
+    println!(
+        "Price Range: {:.6} - {:.6}",
+        position.min_price, position.max_price
+    );
+    println!(
+        "Current Value: {}",
+        finance::format_usd(position.current_position_value)
+    );
 
     if let Some(chain) = &position.chain {
         println!("Chain: {} (ID: {})", chain.name, chain.id);
@@ -344,7 +400,8 @@ pub fn print_position_detail(position: &Position) -> Result<()> {
     if let Some(current_amounts) = &position.current_amounts {
         println!("\nCurrent Token Amounts:");
         for amount in current_amounts {
-            println!("  {}: {} ({})",
+            println!(
+                "  {}: {} ({})",
                 amount.token.symbol,
                 amount.balance,
                 finance::format_usd(amount.value)
@@ -355,7 +412,8 @@ pub fn print_position_detail(position: &Position) -> Result<()> {
     if let Some(provided_amounts) = &position.provided_amounts {
         println!("\nProvided Token Amounts:");
         for amount in provided_amounts {
-            println!("  {}: {} ({})",
+            println!(
+                "  {}: {} ({})",
                 amount.token.symbol,
                 amount.balance,
                 finance::format_usd(amount.value)
@@ -365,14 +423,29 @@ pub fn print_position_detail(position: &Position) -> Result<()> {
 
     if let Some(performance) = &position.performance {
         println!("\nPerformance:");
-        println!("  Total Deposit Value: {}", finance::format_usd(performance.total_deposit_value));
-        println!("  Total Withdraw Value: {}", finance::format_usd(performance.total_withdraw_value));
+        println!(
+            "  Total Deposit Value: {}",
+            finance::format_usd(performance.total_deposit_value)
+        );
+        println!(
+            "  Total Withdraw Value: {}",
+            finance::format_usd(performance.total_withdraw_value)
+        );
         println!("  P&L: {}", finance::format_usd(performance.pnl));
-        println!("  ROI: {}", finance::format_percentage(performance.return_on_investment));
-        println!("  Impermanent Loss: {}", finance::format_usd(performance.impermanent_loss));
+        println!(
+            "  ROI: {}",
+            finance::format_percentage(performance.return_on_investment)
+        );
+        println!(
+            "  Impermanent Loss: {}",
+            finance::format_usd(performance.impermanent_loss)
+        );
 
         if let Some(compare_to_hold) = performance.compare_to_hold {
-            println!("  Compare to Hold: {}", finance::format_percentage(compare_to_hold));
+            println!(
+                "  Compare to Hold: {}",
+                finance::format_percentage(compare_to_hold)
+            );
         }
 
         if let Some(apr) = &performance.apr {
@@ -396,23 +469,26 @@ pub fn print_transactions_table(transactions: &[Transaction], compact: bool) -> 
 
     if compact {
         for tx in transactions {
-            println!("{}: {} - {:.4}/{:.4}",
-                &tx.hash[0..10],
+            println!(
+                "{}: {} - {:.4}/{:.4}",
+                hash_prefix(&tx.hash),
                 tx.transaction_type,
                 tx.amount0,
                 tx.amount1
             );
         }
     } else {
-        println!("{:<12} {:<10} {:<15} {:<15} {:<20}",
-            "Hash", "Type", "Amount0", "Amount1", "Time");
+        println!(
+            "{:<12} {:<10} {:<15} {:<15} {:<20}",
+            "Hash", "Type", "Amount0", "Amount1", "Time"
+        );
         println!("{}", "-".repeat(75));
 
         for tx in transactions {
             let time_str = crate::utils::time::format_timestamp(tx.timestamp);
             println!(
                 "{:<12} {:<10} {:<15.4} {:<15.4} {:<20}",
-                &tx.hash[0..10],
+                hash_prefix(&tx.hash),
                 truncate_string(&tx.transaction_type, 10),
                 tx.amount0,
                 tx.amount1,
@@ -443,24 +519,25 @@ pub fn print_transactions_csv(transactions: &[Transaction]) -> Result<()> {
 // Helper functions
 
 fn print_pools_table_header() {
-    println!("{:<4} {:<20} {:<15} {:<12} {:<12} {:<8}",
-        "#", "Pool", "Protocol", "TVL", "24h Volume", "24h APR");
+    println!(
+        "{:<4} {:<20} {:<15} {:<12} {:<12} {:<8}",
+        "#", "Pool", "Protocol", "TVL", "24h Volume", "24h APR"
+    );
     println!("{}", "-".repeat(75));
 }
 
 fn print_pool_table_row(index: usize, pool: &Pool) -> Result<()> {
-    let token_pair = get_token_pair_display(&pool);
-    let protocol_name = pool.protocol.as_ref()
+    let token_pair = get_token_pair_display(pool);
+    let protocol_name = pool
+        .protocol
+        .as_ref()
         .map(|p| p.key.as_str())
         .unwrap_or("Unknown");
-    let volume_24h = pool.stats24h.as_ref()
-        .map(|s| s.volume)
-        .unwrap_or(0.0);
-    let apr_24h = pool.stats24h.as_ref()
-        .map(|s| s.apr)
-        .unwrap_or(0.0);
+    let volume_24h = pool.stats24h.as_ref().map(|s| s.volume).unwrap_or(0.0);
+    let apr_24h = pool.stats24h.as_ref().map(|s| s.apr).unwrap_or(0.0);
 
-    println!("{:<4} {:<20} {:<15} {:<12} {:<12} {:<8.1}%",
+    println!(
+        "{:<4} {:<20} {:<15} {:<12} {:<12} {:<8.1}%",
         index,
         truncate_string(&token_pair, 20),
         truncate_string(protocol_name, 15),
@@ -473,7 +550,10 @@ fn print_pool_table_row(index: usize, pool: &Pool) -> Result<()> {
 
 fn print_pool_summary(index: usize, pool: &Pool) -> Result<()> {
     println!("\n{}. {}", index, pool.display_name());
-    println!("   Address: {}", address::format_address_default(&pool.address));
+    println!(
+        "   Address: {}",
+        address::format_address_default(&pool.address)
+    );
 
     if let Some(chain) = &pool.chain {
         println!("   Chain: {} (ID: {})", chain.name, chain.id);
@@ -502,19 +582,28 @@ fn print_pool_summary(index: usize, pool: &Pool) -> Result<()> {
 
 fn print_position_summary(index: usize, position: &Position) -> Result<()> {
     println!("\n{}. Position {}", index, position.id);
-    println!("   Owner: {}", address::format_address_default(&position.owner_address));
+    println!(
+        "   Owner: {}",
+        address::format_address_default(&position.owner_address)
+    );
     println!("   Status: {}", position.status);
-    println!("   Value: {}", finance::format_usd(position.current_position_value));
-    println!("   Price Range: {:.6} - {:.6}", position.min_price, position.max_price);
+    println!(
+        "   Value: {}",
+        finance::format_usd(position.current_position_value)
+    );
+    println!(
+        "   Price Range: {:.6} - {:.6}",
+        position.min_price, position.max_price
+    );
 
     if let Some(chain) = &position.chain {
         println!("   Chain: {} (ID: {})", chain.name, chain.id);
     }
 
-    if let Some(pool) = &position.pool {
-        if let Some(protocol) = &pool.protocol {
-            println!("   Protocol: {}", protocol.name);
-        }
+    if let Some(pool) = &position.pool
+        && let Some(protocol) = &pool.protocol
+    {
+        println!("   Protocol: {}", protocol.name);
     }
 
     Ok(())
@@ -547,6 +636,10 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[0..max_len.saturating_sub(3)])
     }
+}
+
+fn hash_prefix(hash: &str) -> &str {
+    hash.get(..10).unwrap_or(hash)
 }
 
 fn escape_csv(s: &str) -> String {

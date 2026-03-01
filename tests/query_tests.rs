@@ -1,7 +1,7 @@
 //! Tests for query builders
 
-use krystal_cli::query::*;
 use krystal_cli::models::{PoolSortBy, PositionStatus};
+use krystal_cli::query::*;
 
 #[test]
 fn test_pools_query_builder() {
@@ -51,9 +51,15 @@ fn test_pools_query_all_fields() {
         .with_incentives(true);
 
     assert_eq!(query.chain_id, Some(137));
-    assert_eq!(query.factory_address, Some("0x1234567890123456789012345678901234567890".to_string()));
+    assert_eq!(
+        query.factory_address,
+        Some("0x1234567890123456789012345678901234567890".to_string())
+    );
     assert_eq!(query.protocol, Some("sushiswap".to_string()));
-    assert_eq!(query.token, Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string()));
+    assert_eq!(
+        query.token,
+        Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string())
+    );
     assert_eq!(query.sort_by, Some(PoolSortBy::Volume24h));
     assert_eq!(query.min_tvl, Some(50000));
     assert_eq!(query.min_volume_24h, Some(100000));

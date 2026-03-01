@@ -28,8 +28,6 @@ pub struct PoolsQuery {
     pub offset: Option<u32>,
     /// Include pools with incentives only
     pub with_incentives: Option<bool>,
-    pub(crate) tvl_from: Option<i64>,
-    pub(crate) volume_24h_from: Option<i64>,
 }
 
 impl PoolsQuery {
@@ -100,16 +98,16 @@ impl PoolsQuery {
 
     /// Validate query parameters
     pub fn validate(&self) -> Result<(), String> {
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > 1000 {
-                return Err("Limit must be between 1 and 1000".to_string());
-            }
+        if let Some(limit) = self.limit
+            && (limit == 0 || limit > 1000)
+        {
+            return Err("Limit must be between 1 and 1000".to_string());
         }
 
-        if let Some(tvl) = self.min_tvl {
-            if tvl > 1_000_000_000 {
-                return Err("Minimum TVL threshold too high".to_string());
-            }
+        if let Some(tvl) = self.min_tvl
+            && tvl > 1_000_000_000
+        {
+            return Err("Minimum TVL threshold too high".to_string());
         }
 
         Ok(())
@@ -237,16 +235,16 @@ impl TransactionQuery {
 
     /// Validate query parameters
     pub fn validate(&self) -> Result<(), String> {
-        if let (Some(start), Some(end)) = (self.start_time, self.end_time) {
-            if start >= end {
-                return Err("Start time must be before end time".to_string());
-            }
+        if let (Some(start), Some(end)) = (self.start_time, self.end_time)
+            && start >= end
+        {
+            return Err("Start time must be before end time".to_string());
         }
 
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > 10000 {
-                return Err("Limit must be between 1 and 10000".to_string());
-            }
+        if let Some(limit) = self.limit
+            && (limit == 0 || limit > 10000)
+        {
+            return Err("Limit must be between 1 and 10000".to_string());
         }
 
         Ok(())

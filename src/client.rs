@@ -7,6 +7,8 @@ use crate::error::{KrystalApiError, Result};
 use crate::models::*;
 use crate::query::*;
 use reqwest::{Client, Response};
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::env;
 use url::Url;
 
@@ -42,9 +44,17 @@ pub struct KrystalApiClient {
 impl KrystalApiClient {
     /// Create a new API client with custom configuration
     pub fn with_config(api_key: String, config: ClientConfig) -> Result<Self> {
+        let api_key = api_key.trim().to_string();
+        if api_key.is_empty() {
+            return Err(KrystalApiError::AuthError);
+        }
+
+        Url::parse(&config.base_url)?;
+
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(config.timeout_secs))
             .user_agent(&config.user_agent)
+            .https_only(true)
             .build()?;
 
         Ok(Self {
@@ -66,15 +76,14 @@ impl KrystalApiClient {
     }
 
     /// Handle API response and convert to appropriate error types
-    async fn handle_response(response: Response) -> Result<serde_json::Value> {
+    async fn handle_response(response: Response) -> Result<Value> {
         let status = response.status();
 
         match status.as_u16() {
-            200..=299 => {
-                let text = response.text().await?;
-                let json: serde_json::Value = serde_json::from_str(&text)?;
-                Ok(json)
-            }
+            200..=299 => response
+                .json::<Value>()
+                .await
+                .map_err(KrystalApiError::from),
             400 => {
                 let error_body = response.text().await.unwrap_or_default();
                 Err(KrystalApiError::InvalidParams(format!(
@@ -94,17 +103,38 @@ impl KrystalApiClient {
         }
     }
 
+    fn endpoint(&self, path: &str) -> Result<Url> {
+        let mut base = Url::parse(&self.config.base_url)?;
+        if !base.path().ends_with('/') {
+            let next_path = format!("{}/", base.path());
+            base.set_path(&next_path);
+        }
+
+        Ok(base.join(path)?)
+    }
+
+    fn parse_item<T: DeserializeOwned>(json: Value, context: &str) -> Result<T> {
+        serde_json::from_value(json).map_err(|e| {
+            KrystalApiError::InvalidParams(format!("Failed to parse {context} response: {e}"))
+        })
+    }
+
+    fn parse_items<T: DeserializeOwned>(items: &[Value], context: &str) -> Result<Vec<T>> {
+        items
+            .iter()
+            .cloned()
+            .map(|item| Self::parse_item(item, context))
+            .collect()
+    }
+
     /// Create a GET request with authentication headers
     fn authenticated_get(&self, url: Url) -> reqwest::RequestBuilder {
-        self.client
-            .get(url)
-            .header("KC-APIKey", &self.api_key)
-            .header("Content-Type", "application/json")
+        self.client.get(url).header("KC-APIKey", &self.api_key)
     }
 
     /// Get list of all supported blockchain networks
     pub async fn get_chains(&self) -> Result<Vec<ChainInfo>> {
-        let url = Url::parse(&format!("{}/v1/chains", self.config.base_url))?;
+        let url = self.endpoint("v1/chains")?;
         let response = self.authenticated_get(url).send().await?;
         let json = Self::handle_response(response).await?;
 
@@ -116,30 +146,23 @@ impl KrystalApiClient {
                 KrystalApiError::InvalidParams("Invalid chains response format".to_string())
             })?;
 
-        let chains: Result<Vec<ChainInfo>> = chains_data
-            .iter()
-            .map(|chain| serde_json::from_value(chain.clone()).map_err(KrystalApiError::from))
-            .collect();
-
-        chains
+        Self::parse_items(chains_data, "chains")
     }
 
     /// Get stats for a specific chain
-    pub async fn get_chain_stats(&self, chain_id: u32) -> Result<serde_json::Value> {
-        let url = Url::parse(&format!(
-            "{}/v1/chains/{}",
-            self.config.base_url, chain_id
-        ))?;
+    pub async fn get_chain_stats(&self, chain_id: u32) -> Result<ChainStats> {
+        let url = self.endpoint(&format!("v1/chains/{chain_id}"))?;
         let response = self.authenticated_get(url).send().await?;
-        Self::handle_response(response).await
+        let json = Self::handle_response(response).await?;
+        let payload = json.get("chain").cloned().unwrap_or(json);
+        Self::parse_item(payload, "chain stats")
     }
 
     /// Get pool data with filtering options
     pub async fn get_pools(&self, query: PoolsQuery) -> Result<Vec<Pool>> {
-        // Validate query before making request
-        let _ = query.validate();
+        query.validate().map_err(KrystalApiError::InvalidParams)?;
 
-        let mut url = Url::parse(&format!("{}/v1/pools", self.config.base_url))?;
+        let mut url = self.endpoint("v1/pools")?;
 
         // Build query parameters
         self.build_pools_query_params(&mut url, &query);
@@ -147,20 +170,14 @@ impl KrystalApiClient {
         let response = self.authenticated_get(url).send().await?;
         let json = Self::handle_response(response).await?;
 
-        // Handle both array response and object with pools field
-        let empty_vec = vec![];
         let pools_data = json
             .get("pools")
             .and_then(|p| p.as_array())
             .or_else(|| json.as_array())
-            .unwrap_or(&empty_vec);
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
 
-        let pools: Result<Vec<Pool>> = pools_data
-            .iter()
-            .map(|pool| serde_json::from_value(pool.clone()).map_err(KrystalApiError::from))
-            .collect();
-
-        pools
+        Self::parse_items(pools_data, "pools")
     }
 
     /// Helper method to build query parameters for pools
@@ -182,10 +199,10 @@ impl KrystalApiClient {
         if let Some(sort_by) = query.sort_by {
             query_pairs.append_pair("sortBy", &u8::from(sort_by).to_string());
         }
-        if let Some(tvl_from) = query.tvl_from {
+        if let Some(tvl_from) = query.min_tvl {
             query_pairs.append_pair("tvlFrom", &tvl_from.to_string());
         }
-        if let Some(volume_from) = query.volume_24h_from {
+        if let Some(volume_from) = query.min_volume_24h {
             query_pairs.append_pair("volume24hFrom", &volume_from.to_string());
         }
         if let Some(limit) = query.limit {
@@ -207,10 +224,7 @@ impl KrystalApiClient {
         factory_address: Option<&str>,
         with_incentives: bool,
     ) -> Result<Pool> {
-        let mut url = Url::parse(&format!(
-            "{}/v1/pools/{}/{}",
-            self.config.base_url, chain_id, pool_address
-        ))?;
+        let mut url = self.endpoint(&format!("v1/pools/{chain_id}/{pool_address}"))?;
 
         {
             let mut query_pairs = url.query_pairs_mut();
@@ -223,8 +237,7 @@ impl KrystalApiClient {
         let response = self.authenticated_get(url).send().await?;
         let json = Self::handle_response(response).await?;
 
-        // Parse as Pool directly
-        serde_json::from_value(json).map_err(KrystalApiError::from)
+        Self::parse_item(json, "pool detail")
     }
 
     /// Get historical data for a specific pool
@@ -234,11 +247,8 @@ impl KrystalApiClient {
         pool_address: &str,
         factory_address: Option<&str>,
         query: Option<TransactionQuery>,
-    ) -> Result<serde_json::Value> {
-        let mut url = Url::parse(&format!(
-            "{}/v1/pools/{}/{}/historical",
-            self.config.base_url, chain_id, pool_address
-        ))?;
+    ) -> Result<PoolHistoricalData> {
+        let mut url = self.endpoint(&format!("v1/pools/{chain_id}/{pool_address}/historical"))?;
 
         {
             let mut query_pairs = url.query_pairs_mut();
@@ -258,7 +268,8 @@ impl KrystalApiClient {
         }
 
         let response = self.authenticated_get(url).send().await?;
-        Self::handle_response(response).await
+        let json = Self::handle_response(response).await?;
+        Self::parse_item(json, "pool historical")
     }
 
     /// Get transactions for a specific pool
@@ -269,10 +280,11 @@ impl KrystalApiClient {
         factory_address: Option<&str>,
         query: Option<TransactionQuery>,
     ) -> Result<Vec<Transaction>> {
-        let mut url = Url::parse(&format!(
-            "{}/v1/pools/{}/{}/transactions",
-            self.config.base_url, chain_id, pool_address
-        ))?;
+        if let Some(q) = &query {
+            q.validate().map_err(KrystalApiError::InvalidParams)?;
+        }
+
+        let mut url = self.endpoint(&format!("v1/pools/{chain_id}/{pool_address}/transactions"))?;
 
         {
             let mut query_pairs = url.query_pairs_mut();
@@ -300,26 +312,20 @@ impl KrystalApiClient {
         let response = self.authenticated_get(url).send().await?;
         let json = Self::handle_response(response).await?;
 
-        let empty_vec = vec![];
         let txs_data = json
             .get("transactions")
             .and_then(|t| t.as_array())
-            .unwrap_or(&empty_vec);
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
 
-        let transactions: Result<Vec<Transaction>> = txs_data
-            .iter()
-            .map(|tx| serde_json::from_value(tx.clone()).map_err(KrystalApiError::from))
-            .collect();
-
-        transactions
+        Self::parse_items(txs_data, "pool transactions")
     }
 
     /// Get all positions for a wallet
     pub async fn get_positions(&self, query: PositionsQuery) -> Result<Vec<Position>> {
-        // Validate query before making request
-        let _ = query.validate();
+        query.validate().map_err(KrystalApiError::InvalidParams)?;
 
-        let mut url = Url::parse(&format!("{}/v1/positions", self.config.base_url))?;
+        let mut url = self.endpoint("v1/positions")?;
 
         {
             let mut query_pairs = url.query_pairs_mut();
@@ -328,10 +334,10 @@ impl KrystalApiClient {
             if let Some(chain_id) = query.chain_id {
                 query_pairs.append_pair("chainId", &chain_id.to_string());
             }
-            if let Some(ref status) = query.position_status {
-                if let Some(status_str) = status.as_str() {
-                    query_pairs.append_pair("positionStatus", status_str);
-                }
+            if let Some(ref status) = query.position_status
+                && let Some(status_str) = status.as_str()
+            {
+                query_pairs.append_pair("positionStatus", status_str);
             }
             if let Some(ref protocols) = query.protocols {
                 for protocol in protocols {
@@ -343,37 +349,24 @@ impl KrystalApiClient {
         let response = self.authenticated_get(url).send().await?;
         let json = Self::handle_response(response).await?;
 
-        let empty_vec = vec![];
         let positions_data = json
             .get("positions")
             .and_then(|p| p.as_array())
             .or_else(|| json.as_array())
-            .unwrap_or(&empty_vec);
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
 
-        let positions: Result<Vec<Position>> = positions_data
-            .iter()
-            .map(|pos| serde_json::from_value(pos.clone()).map_err(KrystalApiError::from))
-            .collect();
-
-        positions
+        Self::parse_items(positions_data, "positions")
     }
 
     /// Get detailed information about a specific position
-    pub async fn get_position_detail(
-        &self,
-        chain_id: u32,
-        position_id: &str,
-    ) -> Result<Position> {
-        let url = Url::parse(&format!(
-            "{}/v1/positions/{}/{}",
-            self.config.base_url, chain_id, position_id
-        ))?;
+    pub async fn get_position_detail(&self, chain_id: u32, position_id: &str) -> Result<Position> {
+        let url = self.endpoint(&format!("v1/positions/{chain_id}/{position_id}"))?;
 
         let response = self.authenticated_get(url).send().await?;
         let json = Self::handle_response(response).await?;
 
-        // Parse as Position directly
-        serde_json::from_value(json).map_err(KrystalApiError::from)
+        Self::parse_item(json, "position detail")
     }
 
     /// Get transaction history for a specific position
@@ -386,13 +379,10 @@ impl KrystalApiClient {
         query: Option<TransactionQuery>,
     ) -> Result<Vec<Transaction>> {
         if let Some(q) = &query {
-            let _ = q.validate();
+            q.validate().map_err(KrystalApiError::InvalidParams)?;
         }
 
-        let mut url = Url::parse(&format!(
-            "{}/v1/positions/{}/transactions",
-            self.config.base_url, chain_id
-        ))?;
+        let mut url = self.endpoint(&format!("v1/positions/{chain_id}/transactions"))?;
 
         {
             let mut query_pairs = url.query_pairs_mut();
@@ -421,25 +411,28 @@ impl KrystalApiClient {
         let response = self.authenticated_get(url).send().await?;
         let json = Self::handle_response(response).await?;
 
-        let empty_vec = vec![];
         let txs_data = json
             .get("transactions")
             .and_then(|t| t.as_array())
-            .unwrap_or(&empty_vec);
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
 
-        let transactions: Result<Vec<Transaction>> = txs_data
-            .iter()
-            .map(|tx| serde_json::from_value(tx.clone()).map_err(KrystalApiError::from))
-            .collect();
-
-        transactions
+        Self::parse_items(txs_data, "position transactions")
     }
 
     /// Get list of all supported protocols
-    pub async fn get_protocols(&self) -> Result<serde_json::Value> {
-        let url = Url::parse(&format!("{}/v1/protocols", self.config.base_url))?;
+    pub async fn get_protocols(&self) -> Result<Vec<ProtocolSummary>> {
+        let url = self.endpoint("v1/protocols")?;
         let response = self.authenticated_get(url).send().await?;
-        Self::handle_response(response).await
+        let json = Self::handle_response(response).await?;
+
+        let protocols_data = json
+            .as_array()
+            .or_else(|| json.get("protocols").and_then(|p| p.as_array()))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+
+        Self::parse_items(protocols_data, "protocols")
     }
 }
 

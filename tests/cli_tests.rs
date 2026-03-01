@@ -1,4 +1,3 @@
-
 use krystal_cli::cli::app::Commands;
 use krystal_cli::cli::app::OutputFormat;
 use krystal_cli::cli::app::PositionStatusArg;
@@ -56,14 +55,20 @@ fn test_escape_csv() {
     assert_eq!(escape_csv("with,comma"), "\"with,comma\"");
     assert_eq!(escape_csv("with\"quote"), "\"with\"\"quote\"");
     assert_eq!(escape_csv("with\nnewline"), "\"with\nnewline\"");
-    assert_eq!(escape_csv("with,comma\"and\"quote"), "\"with,comma\"\"and\"\"quote\"");
+    assert_eq!(
+        escape_csv("with,comma\"and\"quote"),
+        "\"with,comma\"\"and\"\"quote\""
+    );
 }
 
 #[test]
 fn test_truncate_string() {
     // Test the truncate_string function from output.rs
     assert_eq!(truncate_string("short", 10), "short");
-    assert_eq!(truncate_string("this is a very long string", 10), "this is...");
+    assert_eq!(
+        truncate_string("this is a very long string", 10),
+        "this is..."
+    );
     assert_eq!(truncate_string("exactly10c", 10), "exactly10c");
     assert_eq!(truncate_string("a", 5), "a");
 }
@@ -122,7 +127,10 @@ fn test_get_token_pair_display() {
         additional_fields,
     };
 
-    assert_eq!(get_token_pair_display(&pool_without_tokens), "Unknown/Unknown");
+    assert_eq!(
+        get_token_pair_display(&pool_without_tokens),
+        "Unknown/Unknown"
+    );
 }
 
 #[test]
@@ -180,10 +188,13 @@ fn test_cli_parsing_pools_command() {
     let args = vec![
         "krystal-cli",
         "pools",
-        "--chain-id", "1",
-        "--limit", "20",
-        "--protocol", "uniswapv3",
-        "--detailed"
+        "--chain-id",
+        "1",
+        "--limit",
+        "20",
+        "--protocol",
+        "uniswapv3",
+        "--detailed",
     ];
 
     let cli = Cli::try_parse_from(args);
@@ -191,7 +202,13 @@ fn test_cli_parsing_pools_command() {
 
     if let Ok(cli) = cli {
         match cli.command {
-            Commands::Pools { chain_id, limit, protocol, detailed, .. } => {
+            Commands::Pools {
+                chain_id,
+                limit,
+                protocol,
+                detailed,
+                ..
+            } => {
                 assert_eq!(chain_id, Some(1));
                 assert_eq!(limit, 20);
                 assert_eq!(protocol, Some("uniswapv3".to_string()));
@@ -210,10 +227,14 @@ fn test_cli_parsing_positions_command() {
         "krystal-cli",
         "positions",
         "0x742d35Cc6639C0532fA20c00fa1A5a6f1a8f3b82",
-        "--chain-id", "1",
-        "--status", "open",
-        "--protocols", "uniswapv3",
-        "--protocols", "sushiswap"
+        "--chain-id",
+        "1",
+        "--status",
+        "open",
+        "--protocols",
+        "uniswapv3",
+        "--protocols",
+        "sushiswap",
     ];
 
     let cli = Cli::try_parse_from(args);
@@ -221,7 +242,13 @@ fn test_cli_parsing_positions_command() {
 
     if let Ok(cli) = cli {
         match cli.command {
-            Commands::Positions { wallet, chain_id, status, protocols, .. } => {
+            Commands::Positions {
+                wallet,
+                chain_id,
+                status,
+                protocols,
+                ..
+            } => {
                 assert_eq!(wallet, "0x742d35Cc6639C0532fA20c00fa1A5a6f1a8f3b82");
                 assert_eq!(chain_id, Some(1));
                 assert_eq!(status, Some(PositionStatusArg::Open));
@@ -241,8 +268,9 @@ fn test_cli_parsing_pool_detail_command() {
         "pool-detail",
         "1",
         "0x7e3d694a81ec15e56a4fea19f3bc841afe462b41",
-        "--factory", "0x1f98431c8ad98523631ae4a59f267346ea31f984",
-        "--with-incentives"
+        "--factory",
+        "0x1f98431c8ad98523631ae4a59f267346ea31f984",
+        "--with-incentives",
     ];
 
     let cli = Cli::try_parse_from(args);
@@ -250,10 +278,18 @@ fn test_cli_parsing_pool_detail_command() {
 
     if let Ok(cli) = cli {
         match cli.command {
-            Commands::PoolDetail { chain_id, pool_address, factory, with_incentives } => {
+            Commands::PoolDetail {
+                chain_id,
+                pool_address,
+                factory,
+                with_incentives,
+            } => {
                 assert_eq!(chain_id, 1);
                 assert_eq!(pool_address, "0x7e3d694a81ec15e56a4fea19f3bc841afe462b41");
-                assert_eq!(factory, Some("0x1f98431c8ad98523631ae4a59f267346ea31f984".to_string()));
+                assert_eq!(
+                    factory,
+                    Some("0x1f98431c8ad98523631ae4a59f267346ea31f984".to_string())
+                );
                 assert!(with_incentives);
             }
             _ => panic!("Expected PoolDetail command"),
@@ -270,8 +306,10 @@ fn test_cli_parsing_pool_transactions_command() {
         "pool-transactions",
         "1",
         "0x7e3d694a81ec15e56a4fea19f3bc841afe462b41",
-        "--days-ago", "7",
-        "--limit", "100"
+        "--days-ago",
+        "7",
+        "--limit",
+        "100",
     ];
 
     let cli = Cli::try_parse_from(args);
@@ -279,7 +317,13 @@ fn test_cli_parsing_pool_transactions_command() {
 
     if let Ok(cli) = cli {
         match cli.command {
-            Commands::PoolTransactions { chain_id, pool_address, days_ago, limit, .. } => {
+            Commands::PoolTransactions {
+                chain_id,
+                pool_address,
+                days_ago,
+                limit,
+                ..
+            } => {
                 assert_eq!(chain_id, 1);
                 assert_eq!(pool_address, "0x7e3d694a81ec15e56a4fea19f3bc841afe462b41");
                 assert_eq!(days_ago, Some(7));
@@ -297,9 +341,10 @@ fn test_cli_parsing_with_global_options() {
     let args = vec![
         "krystal-cli",
         "--verbose",
-        "--format", "json",
+        "--format",
+        "json",
         "--no-color",
-        "chains"
+        "chains",
     ];
 
     let cli = Cli::try_parse_from(args);
@@ -322,8 +367,10 @@ fn test_time_parameter_parsing() {
         "pool-history",
         "1",
         "0x123",
-        "--start-time", "1640995200", // Jan 1, 2022
-        "--end-time", "1672531200"    // Jan 1, 2023
+        "--start-time",
+        "1640995200", // Jan 1, 2022
+        "--end-time",
+        "1672531200", // Jan 1, 2023
     ];
 
     let cli = Cli::try_parse_from(args);
@@ -331,7 +378,11 @@ fn test_time_parameter_parsing() {
 
     if let Ok(cli) = cli {
         match cli.command {
-            Commands::PoolHistory { start_time, end_time, .. } => {
+            Commands::PoolHistory {
+                start_time,
+                end_time,
+                ..
+            } => {
                 assert_eq!(start_time, Some(1640995200));
                 assert_eq!(end_time, Some(1672531200));
             }

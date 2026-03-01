@@ -22,6 +22,31 @@ pub struct ChainInfo {
     pub additional_fields: HashMap<String, serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ChainStats {
+    pub id: Option<u32>,
+    pub name: Option<String>,
+    #[serde(flatten)]
+    pub additional_fields: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ProtocolSummary {
+    pub key: String,
+    pub name: String,
+    #[serde(rename = "factoryAddress")]
+    pub factory_address: Option<String>,
+    pub logo: Option<String>,
+    #[serde(flatten)]
+    pub additional_fields: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct PoolHistoricalData {
+    #[serde(flatten)]
+    pub additional_fields: HashMap<String, serde_json::Value>,
+}
+
 /// Information about a liquidity pool - matches actual API response
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Pool {
@@ -32,7 +57,7 @@ pub struct Pool {
     pub address: String,
     /// Pool price (token0 in terms of token1)
     #[serde(rename = "poolPrice")]
-    pub pool_price: f64,  // Changed from Option<String> to f64
+    pub pool_price: f64, // Changed from Option<String> to f64
     /// Protocol information
     pub protocol: Option<ProtocolInfo>,
     /// Fee tier in basis points
@@ -336,11 +361,23 @@ impl Pool {
     /// Format pool for display
     /// Format pool for display
     pub fn display_name(&self) -> String {
-        let token0_symbol = self.token0.as_ref().map_or("?".to_string(), |t| t.symbol.clone());
-        let token1_symbol = self.token1.as_ref().map_or("?".to_string(), |t| t.symbol.clone());
-        let protocol_name = self.protocol.as_ref().map_or("Unknown".to_string(), |p| p.name.clone());
+        let token0_symbol = self
+            .token0
+            .as_ref()
+            .map_or("?".to_string(), |t| t.symbol.clone());
+        let token1_symbol = self
+            .token1
+            .as_ref()
+            .map_or("?".to_string(), |t| t.symbol.clone());
+        let protocol_name = self
+            .protocol
+            .as_ref()
+            .map_or("Unknown".to_string(), |p| p.name.clone());
 
-        format!("{}/{} ({}) Pool", token0_symbol, token1_symbol, protocol_name)
+        format!(
+            "{}/{} ({}) Pool",
+            token0_symbol, token1_symbol, protocol_name
+        )
     }
 
     /// Get 24h volume
@@ -519,5 +556,30 @@ mod tests {
         assert_eq!(pool.apr(), Some(10.0));
         assert_eq!(pool.volume_tvl_ratio(), 0.1);
         assert!(pool.is_high_activity());
+    }
+
+    #[test]
+    fn test_protocol_summary_deserialization() {
+        let json =
+            r#"{"key":"uniswapv3","name":"Uniswap V3","logo":"https://example.com/logo.png"}"#;
+        let protocol: ProtocolSummary = serde_json::from_str(json).unwrap();
+
+        assert_eq!(protocol.key, "uniswapv3");
+        assert_eq!(protocol.name, "Uniswap V3");
+        assert_eq!(protocol.factory_address, None);
+        assert_eq!(
+            protocol.logo.as_deref(),
+            Some("https://example.com/logo.png")
+        );
+    }
+
+    #[test]
+    fn test_chain_stats_deserialization() {
+        let json = r#"{"id":1,"name":"Ethereum","tvl":12345.67}"#;
+        let stats: ChainStats = serde_json::from_str(json).unwrap();
+
+        assert_eq!(stats.id, Some(1));
+        assert_eq!(stats.name.as_deref(), Some("Ethereum"));
+        assert!(stats.additional_fields.contains_key("tvl"));
     }
 }

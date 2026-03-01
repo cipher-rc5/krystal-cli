@@ -1,4 +1,4 @@
-use krystal_cli::utils::{address, finance, time, retry, pagination, rate_limit};
+use krystal_cli::utils::{address, finance, pagination, rate_limit, retry, time};
 use std::time::Duration;
 
 #[test]
@@ -226,7 +226,8 @@ fn test_pagination_iterator_no_more_pages() {
 async fn test_retry_success_on_first_attempt() {
     let result = retry::retry_simple(3, || async {
         Ok::<i32, krystal_cli::error::KrystalApiError>(42)
-    }).await;
+    })
+    .await;
 
     assert_eq!(result.unwrap(), 42);
 }
@@ -257,7 +258,8 @@ async fn test_retry_with_backoff_config() {
                 Ok(42)
             }
         }
-    }).await;
+    })
+    .await;
 
     assert_eq!(result.unwrap(), 42);
     assert_eq!(*attempt_count.borrow(), 2);

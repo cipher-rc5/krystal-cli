@@ -758,8 +758,8 @@ cargo test test_pools_query_builder
 cargo test test_address_validation
 cargo test test_usd_formatting
 
-# Integration tests (requires API key)
-KRYSTAL_API_KEY=your_key cargo test --features integration
+# Live API smoke tests (feature-gated, requires API key)
+KRYSTAL_API_KEY=your_key KRYSTAL_RUN_LIVE_TESTS=1 cargo test --features live-api-tests live_api_smoke
 ```
 
 ### CLI Development Commands

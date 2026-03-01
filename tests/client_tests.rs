@@ -1,6 +1,6 @@
 //! Tests for the API client functionality
 
-use krystal_cli::client::{KrystalApiClient};
+use krystal_cli::client::KrystalApiClient;
 
 #[test]
 fn test_client_creation() {
