@@ -1,8 +1,8 @@
 // file: src/cli/commands.rs
-// description:
-// docs_reference:
+// description: Command execution logic that translates CLI arguments into API calls and
+//             routes results to the appropriate output formatter
+// docs_reference: https://docs.rs/clap/latest/clap/
 
-use crate::KrystalApiClient;
 use crate::cli::app::Commands;
 use crate::cli::app::OutputFormat;
 use crate::cli::app::PositionStatusArg;
@@ -10,6 +10,7 @@ use crate::cli::output::*;
 use crate::error::Result;
 use crate::query::*;
 use crate::utils::time;
+use crate::KrystalApiClient;
 
 struct PoolCommandArgs {
     chain_id: Option<u32>,
@@ -18,8 +19,8 @@ struct PoolCommandArgs {
     token: Option<String>,
     factory: Option<String>,
     sort_by: Option<crate::cli::app::PoolSortBy>,
-    min_tvl: Option<u32>,
-    min_volume: Option<u32>,
+    min_tvl: Option<f64>,
+    min_volume: Option<f64>,
     with_incentives: bool,
     detailed: bool,
     offset: u32,
@@ -336,9 +337,13 @@ async fn handle_pool_history(
 
     match format {
         OutputFormat::Json => print_json(&history)?,
-        _ => {
-            println!("Historical data for pool {}:", pool_address);
-            print_json(&history)?;
+        OutputFormat::Csv => print_pool_history_csv(&history)?,
+        OutputFormat::Table | OutputFormat::Compact => {
+            print_pool_history_table(
+                pool_address,
+                &history,
+                matches!(format, OutputFormat::Compact),
+            )?
         }
     }
 
@@ -461,13 +466,41 @@ async fn handle_protocols(
 
     match format {
         OutputFormat::Json => print_json(&protocols)?,
-        _ => {
-            println!("Supported Protocols:");
+        OutputFormat::Csv => {
             if detailed {
-                print_json(&protocols)?;
+                println!("key,name,factory_address,logo");
+                for p in &protocols {
+                    println!(
+                        "{},{},{},{}",
+                        escape_csv(&p.key),
+                        escape_csv(&p.name),
+                        p.factory_address.as_deref().unwrap_or(""),
+                        p.logo.as_deref().unwrap_or("")
+                    );
+                }
+            } else {
+                println!("key,name");
+                for p in &protocols {
+                    println!("{},{}", escape_csv(&p.key), escape_csv(&p.name));
+                }
+            }
+        }
+        OutputFormat::Table | OutputFormat::Compact => {
+            println!("Supported Protocols ({}):", protocols.len());
+            if detailed {
+                println!("{:<20} {:<25} {:<44}", "Key", "Name", "Factory Address");
+                println!("{}", "-".repeat(90));
+                for p in &protocols {
+                    println!(
+                        "{:<20} {:<25} {:<44}",
+                        truncate_string(&p.key, 20),
+                        truncate_string(&p.name, 25),
+                        p.factory_address.as_deref().unwrap_or("N/A")
+                    );
+                }
             } else {
                 for (i, protocol) in protocols.iter().enumerate() {
-                    println!("{}. {}", i + 1, protocol.name);
+                    println!("{}. {} ({})", i + 1, protocol.name, protocol.key);
                 }
             }
         }
@@ -485,10 +518,8 @@ async fn handle_chain_stats(
 
     match format {
         OutputFormat::Json => print_json(&stats)?,
-        _ => {
-            println!("Chain {} Statistics:", chain_id);
-            print_json(&stats)?;
-        }
+        OutputFormat::Csv => print_chain_stats_csv(chain_id, &stats)?,
+        OutputFormat::Table | OutputFormat::Compact => print_chain_stats_table(chain_id, &stats)?,
     }
 
     Ok(())
@@ -526,5 +557,9 @@ fn build_transaction_query(
         has_params = true;
     }
 
-    if has_params { Some(query) } else { None }
+    if has_params {
+        Some(query)
+    } else {
+        None
+    }
 }

@@ -29,8 +29,8 @@ pub mod cli;
 pub use client::{ClientConfig, KrystalApiClient};
 pub use error::{KrystalApiError, Result};
 pub use models::{
-    ChainInfo, ChainStats, PaginatedResponse, Pool, PoolHistoricalData, PoolSortBy, Position,
-    PositionStatus, ProtocolSummary, Transaction,
+    ChainInfo, ChainStats, PaginatedResponse, Pool, PoolHistoricalData, PoolHistoricalPoint,
+    PoolSortBy, Position, PositionStatus, ProtocolSummary, Transaction,
 };
 pub use query::{PoolsQuery, PositionsQuery, TransactionQuery};
 

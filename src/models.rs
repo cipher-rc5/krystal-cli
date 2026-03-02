@@ -41,8 +41,68 @@ pub struct ProtocolSummary {
     pub additional_fields: HashMap<String, serde_json::Value>,
 }
 
+/// Historical data for a pool across time buckets
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct PoolHistoricalData {
+    /// Hourly data points
+    #[serde(rename = "data1h")]
+    pub data_1h: Option<Vec<PoolHistoricalPoint>>,
+    /// Daily data points
+    #[serde(rename = "data1d")]
+    pub data_1d: Option<Vec<PoolHistoricalPoint>>,
+    /// Weekly data points
+    #[serde(rename = "data7d")]
+    pub data_7d: Option<Vec<PoolHistoricalPoint>>,
+    /// Additional fields returned by the API
+    #[serde(flatten)]
+    pub additional_fields: HashMap<String, serde_json::Value>,
+}
+
+impl PoolHistoricalData {
+    /// Return the most granular available data series
+    pub fn best_series(&self) -> Option<&Vec<PoolHistoricalPoint>> {
+        self.data_1h
+            .as_ref()
+            .or(self.data_1d.as_ref())
+            .or(self.data_7d.as_ref())
+    }
+
+    /// Total volume across all available daily points
+    pub fn total_volume(&self) -> f64 {
+        self.data_1d
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter_map(|p| p.volume)
+            .sum()
+    }
+
+    /// Average APR across all available daily points
+    pub fn average_apr(&self) -> Option<f64> {
+        let series = self.data_1d.as_deref().unwrap_or(&[]);
+        let aprs: Vec<f64> = series.iter().filter_map(|p| p.apr).collect();
+        if aprs.is_empty() {
+            None
+        } else {
+            Some(aprs.iter().sum::<f64>() / aprs.len() as f64)
+        }
+    }
+}
+
+/// Historical data point for a pool (one time bucket)
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct PoolHistoricalPoint {
+    /// Unix timestamp for the start of this bucket
+    pub timestamp: Option<u64>,
+    /// Trading volume in USD for this period
+    pub volume: Option<f64>,
+    /// Fees collected in USD for this period
+    pub fee: Option<f64>,
+    /// Annualized APR for this period
+    pub apr: Option<f64>,
+    /// Total value locked at end of this period
+    pub tvl: Option<f64>,
+    /// Additional fields returned by the API
     #[serde(flatten)]
     pub additional_fields: HashMap<String, serde_json::Value>,
 }

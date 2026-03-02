@@ -60,11 +60,160 @@ pub mod time {
 
 /// Utility functions for working with Ethereum addresses
 pub mod address {
-    /// Check if a string is a valid Ethereum address format
+    /// Check if a string is a valid Ethereum address format (hex chars + length only)
     pub fn is_valid_ethereum_address(address: &str) -> bool {
         address.len() == 42
             && address.starts_with("0x")
             && address[2..].chars().all(|c| c.is_ascii_hexdigit())
+    }
+
+    /// Validate an Ethereum address including EIP-55 mixed-case checksum if applicable.
+    ///
+    /// Accepts:
+    /// - All-lowercase addresses (no checksum to validate)
+    /// - All-uppercase addresses (no checksum to validate)
+    /// - Mixed-case addresses that match their EIP-55 checksum
+    pub fn is_valid_ethereum_address_checksum(address: &str) -> bool {
+        if !is_valid_ethereum_address(address) {
+            return false;
+        }
+
+        let hex = &address[2..];
+
+        // All-lowercase or all-uppercase: no checksum encoding, accept as-is
+        if hex.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()) {
+            return true;
+        }
+        if hex.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+            return true;
+        }
+
+        // Mixed-case: validate EIP-55 checksum using keccak of the lowercase hex
+        let expected = eip55_checksum(hex);
+        hex == expected
+    }
+
+    /// Compute the EIP-55 checksummed form of a 40-char hex string (without 0x prefix)
+    fn eip55_checksum(hex_lower: &str) -> String {
+        let lower = hex_lower.to_ascii_lowercase();
+        let hash = keccak_hex(&lower);
+
+        lower
+            .chars()
+            .zip(hash.chars())
+            .map(|(c, h)| {
+                let hash_nibble = h.to_digit(16).unwrap_or(0);
+                if c.is_ascii_alphabetic() && hash_nibble >= 8 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
+            .collect()
+    }
+
+    /// Minimal Keccak-256 implementation for EIP-55 — returns hex digest.
+    /// Uses the Keccak sponge (not SHA3-256; Ethereum uses the pre-NIST variant).
+    fn keccak_hex(input: &str) -> String {
+        // Rate = 1088 bits = 136 bytes, capacity = 512 bits, output = 256 bits
+        const RATE: usize = 136;
+        const OUTPUT_BYTES: usize = 32;
+
+        let bytes = input.as_bytes();
+        let mut state = [0u64; 25];
+
+        // Absorb
+        let mut buf = bytes.to_vec();
+        // Keccak padding: 0x01 ... 0x80
+        buf.push(0x01);
+        while !buf.len().is_multiple_of(RATE) {
+            buf.push(0x00);
+        }
+        *buf.last_mut().unwrap() ^= 0x80;
+
+        for chunk in buf.chunks(RATE) {
+            for (i, lane_bytes) in chunk.chunks(8).enumerate() {
+                let mut lane = 0u64;
+                for (j, &b) in lane_bytes.iter().enumerate() {
+                    lane |= (b as u64) << (j * 8);
+                }
+                state[i] ^= lane;
+            }
+            keccak_f(&mut state);
+        }
+
+        // Squeeze
+        let mut out = Vec::with_capacity(OUTPUT_BYTES);
+        'outer: for lane in &state {
+            for j in 0..8 {
+                out.push(((lane >> (j * 8)) & 0xff) as u8);
+                if out.len() == OUTPUT_BYTES {
+                    break 'outer;
+                }
+            }
+        }
+
+        out.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    fn keccak_f(state: &mut [u64; 25]) {
+        const RC: [u64; 24] = [
+            0x0000000000000001, 0x0000000000008082, 0x800000000000808A, 0x8000000080008000,
+            0x000000000000808B, 0x0000000080000001, 0x8000000080008081, 0x8000000000008009,
+            0x000000000000008A, 0x0000000000000088, 0x0000000080008009, 0x000000008000000A,
+            0x000000008000808B, 0x800000000000008B, 0x8000000000008089, 0x8000000000008003,
+            0x8000000000008002, 0x8000000000000080, 0x000000000000800A, 0x800000008000000A,
+            0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008,
+        ];
+        const RHO: [u32; 24] = [
+            1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43,
+            25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14,
+        ];
+        const PI: [usize; 24] = [
+            10, 7, 11, 17, 18, 3, 5, 16, 8, 21, 24, 4,
+            15, 23, 19, 13, 12, 2, 20, 14, 22, 9, 6, 1,
+        ];
+
+        for &rc in &RC {
+            // Theta
+            let mut c = [0u64; 5];
+            for x in 0..5 {
+                c[x] = state[x] ^ state[x + 5] ^ state[x + 10] ^ state[x + 15] ^ state[x + 20];
+            }
+            let mut d = [0u64; 5];
+            for x in 0..5 {
+                d[x] = c[(x + 4) % 5] ^ c[(x + 1) % 5].rotate_left(1);
+            }
+            for x in 0..5 {
+                for y in 0..5 {
+                    state[x + y * 5] ^= d[x];
+                }
+            }
+
+            // Rho + Pi
+            let mut b = [0u64; 25];
+            b[0] = state[0];
+            let mut current = state[1];
+            for i in 0..24 {
+                let next = state[PI[i]];
+                b[PI[i]] = current.rotate_left(RHO[i]);
+                current = next;
+            }
+
+            // Chi
+            for y in 0..5 {
+                let row = [
+                    b[y * 5], b[1 + y * 5], b[2 + y * 5],
+                    b[3 + y * 5], b[4 + y * 5],
+                ];
+                for x in 0..5 {
+                    state[x + y * 5] = row[x] ^ ((!row[(x + 1) % 5]) & row[(x + 2) % 5]);
+                }
+            }
+
+            // Iota
+            state[0] ^= rc;
+        }
     }
 
     /// Normalize an Ethereum address to lowercase
@@ -74,6 +223,15 @@ pub mod address {
         } else {
             address.to_string()
         }
+    }
+
+    /// Return the EIP-55 checksummed form of an address
+    pub fn to_checksum_address(address: &str) -> Option<String> {
+        if !is_valid_ethereum_address(address) {
+            return None;
+        }
+        let hex = &address[2..];
+        Some(format!("0x{}", eip55_checksum(hex)))
     }
 
     /// Format address for display (show first and last few characters)
@@ -387,6 +545,33 @@ mod tests {
             "0x742d35Cc6639C0532fA20c00fa1A5a6f1a8f3b8Z"
         ));
         assert!(!address::is_valid_ethereum_address("0x123")); // Too short
+    }
+
+    #[test]
+    fn test_address_checksum_validation() {
+        // All-lowercase is always accepted
+        assert!(address::is_valid_ethereum_address_checksum(
+            "0x742d35cc6639c0532fa20c00fa1a5a6f1a8f3b82"
+        ));
+        // All-uppercase is always accepted
+        assert!(address::is_valid_ethereum_address_checksum(
+            "0x742D35CC6639C0532FA20C00FA1A5A6F1A8F3B82"
+        ));
+        // Invalid format rejected
+        assert!(!address::is_valid_ethereum_address_checksum("0x123"));
+        assert!(!address::is_valid_ethereum_address_checksum("not-an-address"));
+    }
+
+    #[test]
+    fn test_checksum_address_generation() {
+        let lower = "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed";
+        let checksummed = address::to_checksum_address(lower);
+        assert!(checksummed.is_some());
+        let result = checksummed.unwrap();
+        assert!(result.starts_with("0x"));
+        assert_eq!(result.len(), 42);
+        // Round-trip: the result should pass checksum validation
+        assert!(address::is_valid_ethereum_address_checksum(&result));
     }
 
     #[test]

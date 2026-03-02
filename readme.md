@@ -350,9 +350,6 @@ let client = KrystalApiClient::with_config("your_key".to_string(), config)?;
 let chains = client.get_chains().await?;
 for chain in chains {
     println!("Chain: {} (ID: {})", chain.name, chain.id);
-    if let Some(protocols) = chain.supported_protocols {
-        println!("  Protocols: {}", protocols.join(", "));
-    }
     if let Some(explorer) = chain.explorer {
         println!("  Explorer: {}", explorer);
     }
@@ -377,8 +374,8 @@ let query = PoolsQuery::new()
     .chain_id(1)                    // Ethereum
     .protocol("uniswapv3")          // Uniswap V3 only
     .sort_by(PoolSortBy::Tvl)       // Sort by TVL
-    .tvl_from(100000)               // Min $100k TVL
-    .volume_24h_from(50000)         // Min $50k daily volume
+    .min_tvl(100_000.0)             // Min $100k TVL
+    .min_volume_24h(50_000.0)       // Min $50k daily volume
     .with_incentives(true)          // Only pools with rewards
     .limit(50)                      // Max 50 results
     .offset(0);                     // Pagination
@@ -494,9 +491,11 @@ if let Some(incentives) = &pool_detail.incentives {
 }
 
 // Get pool transaction history
+use krystal_cli::utils::time;
+
 let query = TransactionQuery::new()
     .limit(100)
-    .start_time(crate::utils::time::days_ago(7)); // Last 7 days
+    .start_time(time::days_ago(7)); // Last 7 days
 
 let transactions = client.get_pool_transactions(
     1,
@@ -531,7 +530,7 @@ async fn find_best_yields() -> Result<()> {
         let query = PoolsQuery::new()
             .chain_id(chain_id)
             .sort_by(PoolSortBy::Apr)
-            .tvl_from(1_000_000)  // Min $1M TVL
+            .min_tvl(1_000_000.0)  // Min $1M TVL
             .with_incentives(true)
             .limit(5);
 
@@ -594,7 +593,6 @@ async fn analyze_portfolio(wallet: &str) -> Result<()> {
 
     println!("\n{}", "=".repeat(60));
     println!("Summary:");
-    println!("  Total Positions: {}", positions.len());
     println!("  Open Positions: {}", open_positions);
     println!("  Total Portfolio Value: {}", crate::utils::finance::format_usd(total_value));
     println!("  Total P&L: {}", crate::utils::finance::format_usd(total_pnl));

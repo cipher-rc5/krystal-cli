@@ -8,13 +8,13 @@ fn test_pools_query_builder() {
     let query = PoolsQuery::new()
         .chain_id(1)
         .protocol("uniswapv3")
-        .min_tvl(10000)
+        .min_tvl(10000.0)
         .limit(100)
         .sort_by(PoolSortBy::Tvl);
 
     assert_eq!(query.chain_id, Some(1));
     assert_eq!(query.protocol, Some("uniswapv3".to_string()));
-    assert_eq!(query.min_tvl, Some(10000));
+    assert_eq!(query.min_tvl, Some(10000.0));
     assert_eq!(query.limit, Some(100));
     assert_eq!(query.sort_by, Some(PoolSortBy::Tvl));
 
@@ -32,7 +32,7 @@ fn test_pools_query_validation() {
     let valid_query = PoolsQuery::new().limit(100);
     assert!(valid_query.validate().is_ok());
 
-    let invalid_tvl_query = PoolsQuery::new().min_tvl(2_000_000_000);
+    let invalid_tvl_query = PoolsQuery::new().min_tvl(2_000_000_000.0);
     assert!(invalid_tvl_query.validate().is_err());
 }
 
@@ -44,8 +44,8 @@ fn test_pools_query_all_fields() {
         .protocol("sushiswap")
         .token("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
         .sort_by(PoolSortBy::Volume24h)
-        .min_tvl(50000)
-        .min_volume_24h(100000)
+        .min_tvl(50000.0)
+        .min_volume_24h(100000.0)
         .limit(25)
         .offset(50)
         .with_incentives(true);
@@ -61,8 +61,8 @@ fn test_pools_query_all_fields() {
         Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd".to_string())
     );
     assert_eq!(query.sort_by, Some(PoolSortBy::Volume24h));
-    assert_eq!(query.min_tvl, Some(50000));
-    assert_eq!(query.min_volume_24h, Some(100000));
+    assert_eq!(query.min_tvl, Some(50000.0));
+    assert_eq!(query.min_volume_24h, Some(100000.0));
     assert_eq!(query.limit, Some(25));
     assert_eq!(query.offset, Some(50));
     assert_eq!(query.with_incentives, Some(true));

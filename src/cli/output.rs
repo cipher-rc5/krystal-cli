@@ -1,11 +1,58 @@
 // file: src/cli/output.rs
-// description:
-// docs_reference:
+// description: Output formatting and display functions for all CLI commands, supporting
+//             table, CSV, JSON, and compact output formats for chains, pools, positions,
+//             transactions, historical data, and chain statistics
+// docs_reference: https://docs.rs/serde_json/latest/serde_json/
+
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::Result;
 use crate::models::*;
 use crate::utils::{address, finance};
 use serde::Serialize;
+
+static NO_COLOR: AtomicBool = AtomicBool::new(false);
+
+/// Enable or disable colored output globally
+pub fn set_no_color(disabled: bool) {
+    NO_COLOR.store(disabled, Ordering::Relaxed);
+}
+
+fn is_color_enabled() -> bool {
+    !NO_COLOR.load(Ordering::Relaxed)
+}
+
+pub fn color_green(s: &str) -> String {
+    if is_color_enabled() {
+        format!("\x1b[32m{}\x1b[0m", s)
+    } else {
+        s.to_string()
+    }
+}
+
+pub fn color_yellow(s: &str) -> String {
+    if is_color_enabled() {
+        format!("\x1b[33m{}\x1b[0m", s)
+    } else {
+        s.to_string()
+    }
+}
+
+pub fn color_red(s: &str) -> String {
+    if is_color_enabled() {
+        format!("\x1b[31m{}\x1b[0m", s)
+    } else {
+        s.to_string()
+    }
+}
+
+fn color_bold(s: &str) -> String {
+    if is_color_enabled() {
+        format!("\x1b[1m{}\x1b[0m", s)
+    } else {
+        s.to_string()
+    }
+}
 
 /// Print data as JSON
 pub fn print_json<T: Serialize>(data: &T) -> Result<()> {
@@ -21,7 +68,7 @@ pub fn print_chains_table(chains: &[ChainInfo], detailed: bool, compact: bool) -
         return Ok(());
     }
 
-    println!("Found {} supported chains", chains.len());
+    println!("{}", color_bold(&format!("Found {} supported chains", chains.len())));
 
     if compact {
         for chain in chains {
@@ -87,7 +134,7 @@ pub fn print_pools_table(pools: &[Pool], detailed: bool, compact: bool) -> Resul
         return Ok(());
     }
 
-    println!("Found {} pools", pools.len());
+    println!("{}", color_bold(&format!("Found {} pools", pools.len())));
 
     if compact {
         for pool in pools {
@@ -184,7 +231,7 @@ pub fn print_pools_csv(pools: &[Pool], detailed: bool) -> Result<()> {
 
 /// Print detailed pool information
 pub fn print_pool_detail(pool: &Pool) -> Result<()> {
-    println!("\n{}", pool.display_name());
+    println!("\n{}", color_bold(&pool.display_name()));
     println!("Address: {}", pool.address);
 
     if let Some(chain) = &pool.chain {
@@ -278,7 +325,7 @@ pub fn print_positions_table(positions: &[Position], detailed: bool, compact: bo
         return Ok(());
     }
 
-    println!("Found {} positions", positions.len());
+    println!("{}", color_bold(&format!("Found {} positions", positions.len())));
 
     if compact {
         for position in positions {
@@ -368,14 +415,21 @@ pub fn print_positions_csv(positions: &[Position], detailed: bool) -> Result<()>
 
 /// Print detailed position information
 pub fn print_position_detail(position: &Position) -> Result<()> {
-    println!("\nPosition: {}", position.id);
+    println!("\n{}", color_bold(&format!("Position: {}", position.id)));
     println!(
         "Owner: {}",
         address::format_address_default(&position.owner_address)
     );
     println!("Token Address: {}", position.token_address);
     println!("Token ID: {}", position.token_id);
-    println!("Status: {}", position.status);
+
+    let status_colored = match position.status.to_uppercase().as_str() {
+        "IN_RANGE" => color_green(&position.status),
+        "OUT_RANGE" | "OUT_OF_RANGE" => color_yellow(&position.status),
+        "CLOSED" => color_red(&position.status),
+        _ => position.status.clone(),
+    };
+    println!("Status: {}", status_colored);
     println!("Liquidity: {}", position.liquidity);
     println!(
         "Price Range: {:.6} - {:.6}",
@@ -465,7 +519,7 @@ pub fn print_transactions_table(transactions: &[Transaction], compact: bool) -> 
         return Ok(());
     }
 
-    println!("Found {} transactions", transactions.len());
+    println!("{}", color_bold(&format!("Found {} transactions", transactions.len())));
 
     if compact {
         for tx in transactions {
@@ -512,6 +566,175 @@ pub fn print_transactions_csv(transactions: &[Transaction]) -> Result<()> {
             tx.amount1,
             tx.timestamp
         );
+    }
+    Ok(())
+}
+
+/// Print pool historical data in table format
+pub fn print_pool_history_table(
+    pool_address: &str,
+    history: &PoolHistoricalData,
+    compact: bool,
+) -> Result<()> {
+    let series = history.best_series();
+
+    match series {
+        None => {
+            println!("No historical data available for pool {}", pool_address);
+            if !history.additional_fields.is_empty() {
+                println!("Raw data:");
+                print_json(history)?;
+            }
+        }
+        Some(points) if points.is_empty() => {
+            println!("No data points returned for pool {}", pool_address);
+        }
+        Some(points) => {
+            if compact {
+                for point in points {
+                    let ts = point.timestamp.map_or("?".to_string(), |t| {
+                        crate::utils::time::format_timestamp(t)
+                    });
+                    println!(
+                        "{}: vol={} apr={}",
+                        ts,
+                        finance::format_usd(point.volume.unwrap_or(0.0)),
+                        finance::format_percentage(point.apr.unwrap_or(0.0))
+                    );
+                }
+            } else {
+                println!(
+                    "{}",
+                    color_bold(&format!(
+                        "Historical data for pool {} ({} points)",
+                        address::format_address_default(pool_address),
+                        points.len()
+                    ))
+                );
+
+                if let Some(avg_apr) = history.average_apr() {
+                    println!("  Average APR: {}", finance::format_percentage(avg_apr));
+                }
+                println!(
+                    "  Total Volume: {}",
+                    finance::format_usd(history.total_volume())
+                );
+                println!();
+
+                println!(
+                    "{:<22} {:<14} {:<14} {:<10} {:<14}",
+                    "Timestamp", "Volume", "Fees", "APR", "TVL"
+                );
+                println!("{}", "-".repeat(78));
+
+                for point in points {
+                    let ts = point.timestamp.map_or("N/A".to_string(), |t| {
+                        crate::utils::time::format_timestamp(t)
+                    });
+                    println!(
+                        "{:<22} {:<14} {:<14} {:<10} {:<14}",
+                        truncate_string(&ts, 22),
+                        format_usd_compact(point.volume.unwrap_or(0.0)),
+                        format_usd_compact(point.fee.unwrap_or(0.0)),
+                        format!("{:.1}%", point.apr.unwrap_or(0.0)),
+                        format_usd_compact(point.tvl.unwrap_or(0.0)),
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Print pool historical data in CSV format
+pub fn print_pool_history_csv(history: &PoolHistoricalData) -> Result<()> {
+    println!("timestamp,volume,fee,apr,tvl");
+    if let Some(points) = history.best_series() {
+        for point in points {
+            println!(
+                "{},{},{},{},{}",
+                point.timestamp.unwrap_or(0),
+                point.volume.unwrap_or(0.0),
+                point.fee.unwrap_or(0.0),
+                point.apr.unwrap_or(0.0),
+                point.tvl.unwrap_or(0.0),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Print chain statistics in table format
+pub fn print_chain_stats_table(chain_id: u32, stats: &ChainStats) -> Result<()> {
+    println!(
+        "{}",
+        color_bold(&format!(
+            "Chain {} Statistics{}",
+            chain_id,
+            stats
+                .name
+                .as_deref()
+                .map_or(String::new(), |n| format!(" — {}", n))
+        ))
+    );
+
+    if let Some(id) = stats.id {
+        println!("  Chain ID:  {}", id);
+    }
+    if let Some(name) = &stats.name {
+        println!("  Name:      {}", name);
+    }
+
+    let known_keys = ["id", "name"];
+    let extras: Vec<_> = stats
+        .additional_fields
+        .iter()
+        .filter(|(k, _)| !known_keys.contains(&k.as_str()))
+        .collect();
+
+    if !extras.is_empty() {
+        println!();
+        for (key, value) in &extras {
+            let formatted_value = match value {
+                serde_json::Value::Number(n) => {
+                    if let Some(f) = n.as_f64() {
+                        if f.abs() >= 1_000.0 {
+                            finance::format_usd(f)
+                        } else {
+                            format!("{:.4}", f)
+                        }
+                    } else {
+                        value.to_string()
+                    }
+                }
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                other => other.to_string(),
+            };
+            println!("  {:<20} {}", snake_to_title(key), formatted_value);
+        }
+    }
+
+    Ok(())
+}
+
+/// Print chain stats in CSV format
+pub fn print_chain_stats_csv(chain_id: u32, stats: &ChainStats) -> Result<()> {
+    println!("field,value");
+    println!("chain_id,{}", chain_id);
+    if let Some(id) = stats.id {
+        println!("id,{}", id);
+    }
+    if let Some(name) = &stats.name {
+        println!("name,{}", escape_csv(name));
+    }
+    for (key, value) in &stats.additional_fields {
+        let v = match value {
+            serde_json::Value::String(s) => escape_csv(s),
+            other => other.to_string(),
+        };
+        println!("{},{}", escape_csv(key), v);
     }
     Ok(())
 }
@@ -630,7 +853,7 @@ fn format_usd_compact(amount: f64) -> String {
     }
 }
 
-fn truncate_string(s: &str, max_len: usize) -> String {
+pub fn truncate_string(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
@@ -642,10 +865,25 @@ fn hash_prefix(hash: &str) -> &str {
     hash.get(..10).unwrap_or(hash)
 }
 
-fn escape_csv(s: &str) -> String {
+pub fn escape_csv(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
     }
+}
+
+fn snake_to_title(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(first) => {
+                    first.to_uppercase().collect::<String>() + chars.as_str()
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }

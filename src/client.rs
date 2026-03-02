@@ -1,15 +1,21 @@
 // file: src/client.rs
 // description: Main API client implementation for the Krystal Cloud API, handling HTTP requests,
-//             authentication, response parsing, and providing high-level methods for API interaction
+//             authentication, response parsing, retry with exponential backoff, rate limiting,
+//             and providing high-level methods for API interaction
 // docs_reference: https://docs.rs/reqwest/latest/reqwest/
 
 use crate::error::{KrystalApiError, Result};
 use crate::models::*;
 use crate::query::*;
+use crate::utils::rate_limit::RateLimiter;
+use crate::utils::retry::{RetryConfig, retry_with_backoff};
+use log::debug;
 use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::env;
+use std::sync::Mutex;
+use std::time::Duration;
 use url::Url;
 
 /// Configuration for the API client
@@ -21,6 +27,10 @@ pub struct ClientConfig {
     pub timeout_secs: u64,
     /// User agent string
     pub user_agent: String,
+    /// Retry configuration for transient failures
+    pub retry: RetryConfig,
+    /// Maximum requests per second (0 = unlimited)
+    pub max_requests_per_second: usize,
 }
 
 impl Default for ClientConfig {
@@ -28,17 +38,28 @@ impl Default for ClientConfig {
         Self {
             base_url: "https://cloud-api.krystal.app".to_string(),
             timeout_secs: 30,
-            user_agent: "krystal-rust-client/0.1.0".to_string(),
+            user_agent: format!("krystal-rust-client/{}", env!("CARGO_PKG_VERSION")),
+            retry: RetryConfig::default(),
+            max_requests_per_second: 10,
         }
     }
 }
 
 /// Main API client for interacting with the Krystal Cloud API
-#[derive(Debug)]
 pub struct KrystalApiClient {
     client: Client,
     config: ClientConfig,
     api_key: String,
+    rate_limiter: Mutex<RateLimiter>,
+}
+
+impl std::fmt::Debug for KrystalApiClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KrystalApiClient")
+            .field("config", &self.config)
+            .field("api_key", &"[redacted]")
+            .finish()
+    }
 }
 
 impl KrystalApiClient {
@@ -52,15 +73,21 @@ impl KrystalApiClient {
         Url::parse(&config.base_url)?;
 
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(config.timeout_secs))
+            .timeout(Duration::from_secs(config.timeout_secs))
             .user_agent(&config.user_agent)
             .https_only(true)
             .build()?;
+
+        let rate_limiter = RateLimiter::new(
+            config.max_requests_per_second,
+            Duration::from_secs(1),
+        );
 
         Ok(Self {
             client,
             config,
             api_key,
+            rate_limiter: Mutex::new(rate_limiter),
         })
     }
 
@@ -78,6 +105,9 @@ impl KrystalApiClient {
     /// Handle API response and convert to appropriate error types
     async fn handle_response(response: Response) -> Result<Value> {
         let status = response.status();
+        let url = response.url().to_string();
+
+        debug!("Response: {} from {}", status.as_u16(), url);
 
         match status.as_u16() {
             200..=299 => response
@@ -132,13 +162,44 @@ impl KrystalApiClient {
         self.client.get(url).header("KC-APIKey", &self.api_key)
     }
 
+    /// Enforce rate limit, waiting if necessary
+    async fn enforce_rate_limit(&self) {
+        loop {
+            let wait_duration = {
+                let mut limiter = self.rate_limiter.lock().expect("rate limiter poisoned");
+                if limiter.can_request() {
+                    limiter.record_request();
+                    break;
+                }
+                limiter.time_until_next_request()
+            };
+            if wait_duration.is_zero() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            } else {
+                debug!("Rate limit reached, waiting {}ms", wait_duration.as_millis());
+                tokio::time::sleep(wait_duration).await;
+            }
+        }
+    }
+
+    /// Execute a GET request with rate limiting and retry
+    async fn get_with_retry(&self, url: Url) -> Result<Value> {
+        let config = self.config.retry.clone();
+        retry_with_backoff(config, || async {
+            self.enforce_rate_limit().await;
+            let url = url.clone();
+            debug!("GET {}", url);
+            let response = self.authenticated_get(url).send().await?;
+            Self::handle_response(response).await
+        })
+        .await
+    }
+
     /// Get list of all supported blockchain networks
     pub async fn get_chains(&self) -> Result<Vec<ChainInfo>> {
         let url = self.endpoint("v1/chains")?;
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
 
-        // Handle both array response and object with chains field
         let chains_data = json
             .as_array()
             .or_else(|| json.get("chains").and_then(|c| c.as_array()))
@@ -152,8 +213,7 @@ impl KrystalApiClient {
     /// Get stats for a specific chain
     pub async fn get_chain_stats(&self, chain_id: u32) -> Result<ChainStats> {
         let url = self.endpoint(&format!("v1/chains/{chain_id}"))?;
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
         let payload = json.get("chain").cloned().unwrap_or(json);
         Self::parse_item(payload, "chain stats")
     }
@@ -163,12 +223,9 @@ impl KrystalApiClient {
         query.validate().map_err(KrystalApiError::InvalidParams)?;
 
         let mut url = self.endpoint("v1/pools")?;
-
-        // Build query parameters
         self.build_pools_query_params(&mut url, &query);
 
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
 
         let pools_data = json
             .get("pools")
@@ -200,10 +257,10 @@ impl KrystalApiClient {
             query_pairs.append_pair("sortBy", &u8::from(sort_by).to_string());
         }
         if let Some(tvl_from) = query.min_tvl {
-            query_pairs.append_pair("tvlFrom", &tvl_from.to_string());
+            query_pairs.append_pair("tvlFrom", &format!("{tvl_from}"));
         }
         if let Some(volume_from) = query.min_volume_24h {
-            query_pairs.append_pair("volume24hFrom", &volume_from.to_string());
+            query_pairs.append_pair("volume24hFrom", &format!("{volume_from}"));
         }
         if let Some(limit) = query.limit {
             query_pairs.append_pair("limit", &limit.to_string());
@@ -234,9 +291,7 @@ impl KrystalApiClient {
             query_pairs.append_pair("withIncentives", &with_incentives.to_string());
         }
 
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
-
+        let json = self.get_with_retry(url).await?;
         Self::parse_item(json, "pool detail")
     }
 
@@ -267,8 +322,7 @@ impl KrystalApiClient {
             }
         }
 
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
         Self::parse_item(json, "pool historical")
     }
 
@@ -309,8 +363,7 @@ impl KrystalApiClient {
             }
         }
 
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
 
         let txs_data = json
             .get("transactions")
@@ -346,8 +399,7 @@ impl KrystalApiClient {
             }
         }
 
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
 
         let positions_data = json
             .get("positions")
@@ -362,10 +414,7 @@ impl KrystalApiClient {
     /// Get detailed information about a specific position
     pub async fn get_position_detail(&self, chain_id: u32, position_id: &str) -> Result<Position> {
         let url = self.endpoint(&format!("v1/positions/{chain_id}/{position_id}"))?;
-
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
-
+        let json = self.get_with_retry(url).await?;
         Self::parse_item(json, "position detail")
     }
 
@@ -408,8 +457,7 @@ impl KrystalApiClient {
             }
         }
 
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
 
         let txs_data = json
             .get("transactions")
@@ -423,8 +471,7 @@ impl KrystalApiClient {
     /// Get list of all supported protocols
     pub async fn get_protocols(&self) -> Result<Vec<ProtocolSummary>> {
         let url = self.endpoint("v1/protocols")?;
-        let response = self.authenticated_get(url).send().await?;
-        let json = Self::handle_response(response).await?;
+        let json = self.get_with_retry(url).await?;
 
         let protocols_data = json
             .as_array()
@@ -537,6 +584,47 @@ impl KrystalApiClient {
         self.get_positions(query).await
     }
 
+    /// Get pools with full pagination metadata
+    pub async fn get_pools_paginated(
+        &self,
+        query: PoolsQuery,
+    ) -> Result<PaginatedResponse<Pool>> {
+        query.validate().map_err(KrystalApiError::InvalidParams)?;
+
+        let limit = query.limit;
+        let offset = query.offset;
+
+        let mut url = self.endpoint("v1/pools")?;
+        self.build_pools_query_params(&mut url, &query);
+
+        let json = self.get_with_retry(url).await?;
+
+        let pools_data = json
+            .get("pools")
+            .and_then(|p| p.as_array())
+            .or_else(|| json.as_array())
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+
+        let pools: Vec<Pool> = Self::parse_items(pools_data, "pools")?;
+
+        let total = json
+            .get("total")
+            .and_then(|v| v.as_u64());
+        let has_more = json
+            .get("hasMore")
+            .and_then(|v| v.as_bool())
+            .or_else(|| total.map(|t| pools_data.len() as u64 + (offset.unwrap_or(0) as u64) < t));
+
+        Ok(PaginatedResponse {
+            data: pools,
+            total,
+            offset: offset.map(|o| o as u64),
+            limit: limit.map(|l| l as u64),
+            has_more,
+        })
+    }
+
     /// Get recent transactions for a pool
     pub async fn get_recent_pool_transactions(
         &self,
@@ -561,11 +649,33 @@ mod tests {
     }
 
     #[test]
+    fn test_client_rejects_empty_key() {
+        let client = KrystalApiClient::new("".to_string());
+        assert!(client.is_err());
+        assert!(matches!(client.unwrap_err(), KrystalApiError::AuthError));
+    }
+
+    #[test]
+    fn test_client_rejects_whitespace_only_key() {
+        let client = KrystalApiClient::new("   ".to_string());
+        assert!(client.is_err());
+        assert!(matches!(client.unwrap_err(), KrystalApiError::AuthError));
+    }
+
+    #[test]
+    fn test_client_trims_whitespace_from_key() {
+        let client = KrystalApiClient::new("  test-key  ".to_string());
+        assert!(client.is_ok());
+    }
+
+    #[test]
     fn test_client_with_custom_config() {
         let config = ClientConfig {
             base_url: "https://api.example.com".to_string(),
             timeout_secs: 60,
             user_agent: "test-client/1.0".to_string(),
+            retry: RetryConfig::default(),
+            max_requests_per_second: 5,
         };
 
         let client = KrystalApiClient::with_config("test-key".to_string(), config);
@@ -573,10 +683,21 @@ mod tests {
     }
 
     #[test]
+    fn test_client_rejects_invalid_base_url() {
+        let config = ClientConfig {
+            base_url: "not-a-url".to_string(),
+            ..ClientConfig::default()
+        };
+        let client = KrystalApiClient::with_config("test-key".to_string(), config);
+        assert!(client.is_err());
+    }
+
+    #[test]
     fn test_default_config() {
         let config = ClientConfig::default();
         assert_eq!(config.base_url, "https://cloud-api.krystal.app");
         assert_eq!(config.timeout_secs, 30);
+        assert_eq!(config.max_requests_per_second, 10);
     }
 
     #[test]
@@ -589,5 +710,47 @@ mod tests {
 
         let query_string = url.query().unwrap_or("");
         assert!(query_string.contains("chainId=1"));
+    }
+
+    #[test]
+    fn test_pools_query_params_all_fields() {
+        let mut url = Url::parse("https://api.example.com/test").unwrap();
+        let query = PoolsQuery::new()
+            .chain_id(1)
+            .protocol("uniswapv3")
+            .min_tvl(100_000.0)
+            .min_volume_24h(50_000.0)
+            .limit(25)
+            .offset(10)
+            .with_incentives(true)
+            .sort_by(PoolSortBy::Tvl);
+
+        let client = KrystalApiClient::new("test".to_string()).unwrap();
+        client.build_pools_query_params(&mut url, &query);
+
+        let qs = url.query().unwrap_or("");
+        assert!(qs.contains("chainId=1"));
+        assert!(qs.contains("protocol=uniswapv3"));
+        assert!(qs.contains("tvlFrom="));
+        assert!(qs.contains("volume24hFrom="));
+        assert!(qs.contains("limit=25"));
+        assert!(qs.contains("offset=10"));
+        assert!(qs.contains("withIncentives=true"));
+        assert!(qs.contains("sortBy=1"));
+    }
+
+    #[test]
+    fn test_endpoint_construction() {
+        let client = KrystalApiClient::new("test-key".to_string()).unwrap();
+        let url = client.endpoint("v1/chains").unwrap();
+        assert_eq!(url.as_str(), "https://cloud-api.krystal.app/v1/chains");
+    }
+
+    #[test]
+    fn test_debug_redacts_api_key() {
+        let client = KrystalApiClient::new("super-secret-key".to_string()).unwrap();
+        let debug_str = format!("{:?}", client);
+        assert!(!debug_str.contains("super-secret-key"));
+        assert!(debug_str.contains("[redacted]"));
     }
 }

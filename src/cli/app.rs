@@ -1,18 +1,20 @@
 // file: src/cli/app.rs
-// description:
-// docs_reference:
+// description: CLI argument definitions, subcommand structure, and the main run_cli entry point;
+//             maps user-facing argument types to library model types
+// docs_reference: https://docs.rs/clap/latest/clap/
 
 use crate::KrystalApiClient;
 use crate::cli::commands;
+use crate::cli::output::set_no_color;
 use crate::error::Result;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "krystal-cli")]
 #[command(about = "Command line tool for interacting with the Krystal Cloud API")]
-#[command(version = "0.1.0")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(
-    long_about = "comprehensive commandline tool for querying DeFi pools, positions, transactions, and blockchain data through the Krystal Cloud API"
+    long_about = "Comprehensive command-line tool for querying DeFi pools, positions, transactions, and blockchain data through the Krystal Cloud API"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -80,13 +82,13 @@ pub enum Commands {
         #[arg(short, long, value_enum)]
         sort_by: Option<PoolSortBy>,
 
-        /// Minimum TVL threshold
+        /// Minimum TVL threshold (USD)
         #[arg(long)]
-        min_tvl: Option<u32>,
+        min_tvl: Option<f64>,
 
-        /// Minimum 24h volume threshold
+        /// Minimum 24h volume threshold (USD)
         #[arg(long)]
-        min_volume: Option<u32>,
+        min_volume: Option<f64>,
 
         /// Show pools with incentives only
         #[arg(long)]
@@ -334,13 +336,19 @@ impl From<PositionStatusArg> for crate::models::PositionStatus {
 
 /// Main CLI runner function
 pub async fn run_cli() -> Result<()> {
-    // Load environment variables from .env file
     dotenvy::dotenv().ok();
 
     let cli = Cli::parse();
 
+    if cli.no_color {
+        set_no_color(true);
+    }
+
     if cli.verbose {
-        env_logger::init();
+        env_logger::Builder::from_env(
+            env_logger::Env::default().default_filter_or("debug"),
+        )
+        .init();
     }
 
     let client = if let Some(api_key) = cli.api_key.clone() {
@@ -349,6 +357,5 @@ pub async fn run_cli() -> Result<()> {
         KrystalApiClient::from_env()?
     };
 
-    // Pass command and format separately to avoid borrow checker issues
     commands::execute_command(cli.command, &client, cli.format).await
 }

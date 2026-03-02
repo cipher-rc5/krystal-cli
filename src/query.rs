@@ -18,10 +18,10 @@ pub struct PoolsQuery {
     pub token: Option<String>,
     /// Sort results by specified criteria
     pub sort_by: Option<PoolSortBy>,
-    /// Minimum Total Value Locked threshold
-    pub min_tvl: Option<u32>,
-    /// Minimum 24-hour volume threshold
-    pub min_volume_24h: Option<u32>,
+    /// Minimum Total Value Locked threshold (USD)
+    pub min_tvl: Option<f64>,
+    /// Minimum 24-hour volume threshold (USD)
+    pub min_volume_24h: Option<f64>,
     /// Maximum number of results to return
     pub limit: Option<u32>,
     /// Number of results to skip (for pagination)
@@ -66,14 +66,14 @@ impl PoolsQuery {
         self
     }
 
-    /// Set minimum TVL threshold
-    pub fn min_tvl(mut self, tvl: u32) -> Self {
+    /// Set minimum TVL threshold (USD)
+    pub fn min_tvl(mut self, tvl: f64) -> Self {
         self.min_tvl = Some(tvl);
         self
     }
 
-    /// Set minimum 24h volume threshold
-    pub fn min_volume_24h(mut self, volume: u32) -> Self {
+    /// Set minimum 24h volume threshold (USD)
+    pub fn min_volume_24h(mut self, volume: f64) -> Self {
         self.min_volume_24h = Some(volume);
         self
     }
@@ -105,7 +105,7 @@ impl PoolsQuery {
         }
 
         if let Some(tvl) = self.min_tvl
-            && tvl > 1_000_000_000
+            && tvl > 1_000_000_000.0
         {
             return Err("Minimum TVL threshold too high".to_string());
         }
@@ -260,13 +260,13 @@ mod tests {
         let query = PoolsQuery::new()
             .chain_id(1)
             .protocol("uniswapv3")
-            .min_tvl(10000)
+            .min_tvl(10000.0)
             .limit(100)
             .sort_by(PoolSortBy::Tvl);
 
         assert_eq!(query.chain_id, Some(1));
         assert_eq!(query.protocol, Some("uniswapv3".to_string()));
-        assert_eq!(query.min_tvl, Some(10000));
+        assert_eq!(query.min_tvl, Some(10000.0));
         assert_eq!(query.limit, Some(100));
         assert_eq!(query.sort_by, Some(PoolSortBy::Tvl));
 
